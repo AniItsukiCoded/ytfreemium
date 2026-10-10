@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>PremiumTube player</title>
+<style>html,body{margin:0;height:100%;background:#000}iframe{position:absolute;inset:0;width:100%;height:100%;border:0}</style>
+</head>
+<body>
+<script>
+// Relay player. Because this page has a real https address, YouTube accepts the embed here
+// (no Error 153), and the opener's CSP does not apply to it. Errors are reported to the parent.
+(function () {
+  var m = location.search.match(/[?&]v=([\w-]{6,20})/);
+  var v = m && m[1];
+  var hosts = ['www.youtube-nocookie.com', 'www.youtube.com'], h = 0;
+  if (!v) { parent.postMessage({ pt: 'err', code: 'novideo' }, '*'); return; }
+  var f = document.createElement('iframe');
+  f.referrerPolicy = 'strict-origin-when-cross-origin';
+  f.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen';
+  f.allowFullscreen = true;
+  function load() { f.src = 'https://' + hosts[h] + '/embed/' + v + '?autoplay=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1'; }
+  f.onload = function () { try { f.contentWindow.postMessage('{"event":"listening","id":1}', '*'); } catch (e) {} };
+  window.addEventListener('message', function (e) {
+    if (e.source !== f.contentWindow) return;
+    var d = e.data;
+    if (typeof d === 'string') { try { d = JSON.parse(d); } catch (_) { return; } }
+    if (d && d.event === 'onError') {
+      if (h < hosts.length - 1) { h++; load(); } else parent.postMessage({ pt: 'err', code: d.info }, '*');
+    }
+  });
+  document.body.appendChild(f);
+  load();
+  parent.postMessage({ pt: 'ready' }, '*');
+})();
+</script>
+</body>
+</html>

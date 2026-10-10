@@ -277,6 +277,9 @@ body.sidebar-collapsed .main { margin-left: 0; }
 // It is split up here only to keep it out of casual scrapers. The real protection is to
 // restrict the key in Google Cloud Console (HTTP referrers + YouTube Data API v3 only).
 window.PT_CONFIG = {
+  // A real https page that embeds the YouTube player (player.html in this repo, served by GitHub Pages).
+  // Used when the app runs from about:blank, where YouTube rejects the embed (Error 153) or the opener's CSP blocks it.
+  relay: 'https://aniitsukicoded.github.io/ytfreemium/player.html',
   k: ['AIzaSyB1lLPm', 'SPnd-RZY37Win', 'LL-fBkOJXYXqnY'],
 };
 
@@ -604,24 +607,75 @@ function mountGrid(container, first, loader, variant = '') {
 }
 
 
-// YouTube decides whether to allow an embed from the page's referrer. Opened from disk (file://)
-// there is none (Error 153). In an about:blank launcher the referrer comes from the opener, which
-// usually works, so we try the embed and give one-click alternates if it doesn't.
-let playerMode = 0; // 0 = youtube-nocookie.com, 1 = youtube.com
-const embedUrl = (vid, mode) =>
-  `https://${mode === 1 ? 'www.youtube.com' : 'www.youtube-nocookie.com'}/embed/${encodeURIComponent(vid)}?autoplay=1&rel=0&modestbranding=1&playsinline=1`;
+// Player. YouTube only embeds on pages with a real https address (otherwise: Error 153), and an
+// about:blank page also inherits the CSP of whatever opened it, which can block youtube frames
+// outright (ERR_BLOCKED_BY_CSP). So the player tries a chain and moves on by itself when one fails:
+//   nocookie embed -> youtube.com embed -> relay page on GitHub Pages (a real https address)
+const RELAY = (window.PT_CONFIG && window.PT_CONFIG.relay) || '';
+const MODES = ['nocookie', 'youtube'].concat(RELAY ? ['relay'] : []);
+const hasRealAddress = /^https?:$/.test(location.protocol) && !!location.host;
+// From about:blank the direct embed is the likeliest to fail, so lead with the relay there.
+let playerMode = hasRealAddress || !RELAY ? 0 : MODES.indexOf('relay');
+const embedUrl = (vid, mode) => {
+  const m = MODES[mode];
+  if (m === 'relay') return RELAY + '?v=' + encodeURIComponent(vid);
+  return `https://${m === 'youtube' ? 'www.youtube.com' : 'www.youtube-nocookie.com'}/embed/${encodeURIComponent(vid)}?autoplay=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`;
+};
 const watchUrl = (vid) => 'https://www.youtube.com/watch?v=' + encodeURIComponent(vid);
 
+const fallbackHtml = (vid, why) => `<div class="player__fallback">
+  <h2>Can't play here</h2>
+  <p>${why}</p>
+  <a class="btn btn--primary" href="${watchUrl(vid)}" target="_blank" rel="noopener">Watch on YouTube</a>
+</div>`;
+
 function playerHtml(vid, title) {
-  if (location.protocol === 'file:') {
-    return `<div class="player__fallback">
-      <h2>Playback needs a web address</h2>
-      <p>YouTube blocks embedded players on pages opened from a file. This works once the site is on GitHub Pages or launched through the loader.</p>
-      <a class="btn btn--primary" href="${watchUrl(vid)}" target="_blank" rel="noopener">Watch on YouTube</a>
-    </div>`;
-  }
+  if (location.protocol === 'file:' && !RELAY) return fallbackHtml(vid, 'YouTube blocks embedded players on pages opened from a file.');
   return `<iframe src="${embedUrl(vid, playerMode)}" referrerpolicy="strict-origin-when-cross-origin"
     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen title="${esc(title)}"></iframe>`;
+}
+
+// Watches the player iframe and advances to the next mode on: a CSP block, a YouTube error
+// (153 etc., reported through the iframe API), or a relay that never says hello.
+let player = null;
+function stopPlayer() { if (player) { player.stop(); player = null; } }
+function startPlayer(vid) {
+  stopPlayer();
+  const box = document.querySelector('.player');
+  const f = box && box.querySelector('iframe');
+  if (!f) return;
+  let tries = 0, timer = 0, done = false;
+  const arm = () => { clearTimeout(timer); if (MODES[playerMode] === 'relay') timer = setTimeout(() => next(), 7000); };
+  function next(manual) {
+    if (done) return;
+    if (!manual && tries >= MODES.length - 1) {
+      done = true;
+      box.innerHTML = fallbackHtml(vid, 'This device or network blocks YouTube embeds, so the player can\'t load inside this page.');
+      return;
+    }
+    tries++;
+    playerMode = (playerMode + 1) % MODES.length;
+    f.src = embedUrl(vid, playerMode);
+    arm();
+    if (manual) toast('Switched player');
+  }
+  const onMsg = (e) => {
+    if (e.source !== f.contentWindow) return;
+    let d = e.data;
+    if (typeof d === 'string') { try { d = JSON.parse(d); } catch (_) { return; } }
+    if (!d) return;
+    if (d.pt === 'ready') clearTimeout(timer);
+    else if (d.pt === 'err' || d.event === 'onError') next();
+  };
+  const onCsp = (e) => {
+    if (/frame|child/.test(e.violatedDirective || '') && /youtube|github/.test(e.blockedURI || '')) next();
+  };
+  const onLoad = () => { try { f.contentWindow.postMessage('{"event":"listening","id":1}', '*'); } catch (_) {} };
+  window.addEventListener('message', onMsg);
+  document.addEventListener('securitypolicyviolation', onCsp);
+  f.addEventListener('load', onLoad);
+  arm();
+  player = { next, stop() { done = true; clearTimeout(timer); window.removeEventListener('message', onMsg); document.removeEventListener('securitypolicyviolation', onCsp); } };
 }
 
 // ---------- pages ----------
@@ -722,12 +776,10 @@ async function watchPage(id, params) {
 
     // interactions
     document.getElementById('altPlayer').onclick = () => {
-      const f = document.querySelector('.player iframe');
-      if (!f) return toast('Use “Open on YouTube”');
-      playerMode = 1 - playerMode;
-      f.src = embedUrl(vid, playerMode);
-      toast(playerMode ? 'Switched to youtube.com player' : 'Switched to privacy-enhanced player');
+      if (!player) return toast('Use “Open on YouTube”');
+      player.next(true);
     };
+    startPlayer(vid);
     document.getElementById('descMore').onclick = (e) => {
       const d = document.getElementById('desc'); d.classList.toggle('open');
       e.target.textContent = d.classList.contains('open') ? 'Show less' : 'Show more';
@@ -790,6 +842,7 @@ async function channelPage(id, params) {
 // ---------- router ----------
 function route() {
   const id = ++renderId;
+  stopPlayer();
   const { path, params } = parseHash();
   document.title = 'PremiumTube';
   document.body.classList.remove('sidebar-open');
