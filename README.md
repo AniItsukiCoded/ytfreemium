@@ -36,13 +36,14 @@ To point it at a different repo/branch, edit `RAW` in the bootstrap at the botto
 YouTube only allows embedded players on pages with a real web address, and an `about:blank` page also inherits the
 security policy (CSP) of whatever opened it, which can block YouTube frames completely. The player therefore tries a
 chain and moves on by itself when one step fails (CSP block, Error 153, or no response):
-1. `youtube-nocookie.com` embed, 2. `youtube.com` embed, 3. `player.html` on GitHub Pages (a real https page).
-Inside `about:blank` it starts with step 3. Last resort is a **Watch on YouTube** button.
+1. `youtube-nocookie.com` embed, 2. `youtube.com` embed, 3. `player.html` on GitHub Pages (a real https page, if configured).
+Inside `about:blank` it starts with step 3 when a relay is set. Last resort is a **Watch on YouTube** button.
 
-For step 3 to work: enable GitHub Pages (repo Settings → Pages → `main` / root) and keep `player.html` in the repo. If
-the page that hosts your `about:blank` tab has its own CSP, it must allow `https://aniitsukicoded.github.io` in `frame-src`
-(and `www.youtube-nocookie.com` / `www.youtube.com` if you want the direct embeds). The relay address is `relay` in `js/config.js`.
-If the network blocks YouTube itself (some school filters), nothing here can get around that; use **Watch on YouTube**.
+Step 3 is optional. To use it, put `player.html` on any site that has a real https address (your main site is fine; it does
+not have to be this repo or GitHub Pages) and set `relay` in `js/config.js` to its full URL. If the page that hosts your
+`about:blank` tab has its own CSP, it must allow that site in `frame-src`. With `relay` left empty, the player tries the two
+direct embeds and then shows **Watch on YouTube**. If the network blocks YouTube itself (some school filters), nothing here
+can get around that.
 
 ## API key (`js/config.js`)
 A static site has to send the key to the browser, so it can't be fully secret. Protect it in Google
