@@ -45,6 +45,12 @@ not have to be this repo or GitHub Pages) and set `relay` in `js/config.js` to i
 direct embeds and then shows **Watch on YouTube**. If the network blocks YouTube itself (some school filters), nothing here
 can get around that.
 
+### If the app runs inside a Canva (or similar) sandbox
+Such sandboxes set `frame-src 'none'`, so no YouTube embed can load inside the page, and the player falls back to a pop-out.
+For a real on-site player the app must run as its own page at a real https address: host the folder somewhere (any host; GitHub
+Pages on any account works), then either open that address instead of launching from the sandbox, or set `home` in `js/config.js`
+so videos open the full app there.
+
 ## API key (`js/config.js`)
 A static site has to send the key to the browser, so it can't be fully secret. Protect it in Google
 Cloud Console → Credentials → your key:

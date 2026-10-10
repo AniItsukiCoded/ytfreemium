@@ -8,6 +8,10 @@ window.PT_CONFIG = {
 // just tries the two direct embeds and finally shows a "Watch on YouTube" button.
   relay: '',
   // OPTIONAL extra Invidious servers to try first for stream mode (used when a page forbids iframes).
+  // OPTIONAL. Full https address where THIS app is hosted as its own page (e.g. 'https://you.github.io/ytfreemium/').
+  // When the app is stuck inside a sandbox that forbids iframes (Canva), videos then open the full app in a real
+  // window at this address, where the normal on-site player works. Leave '' to use the plain YouTube pop-out.
+  home: '',
   invidious: [],
   piped: [], // OPTIONAL extra Piped API addresses, e.g. 'https://pipedapi.example.org'
   k: ['AIzaSyB1lLPm', 'SPnd-RZY37Win', 'LL-fBkOJXYXqnY'],

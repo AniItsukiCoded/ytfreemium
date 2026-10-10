@@ -286,6 +286,10 @@ window.PT_CONFIG = {
 // just tries the two direct embeds and finally shows a "Watch on YouTube" button.
   relay: '',
   // OPTIONAL extra Invidious servers to try first for stream mode (used when a page forbids iframes).
+  // OPTIONAL. Full https address where THIS app is hosted as its own page (e.g. 'https://you.github.io/ytfreemium/').
+  // When the app is stuck inside a sandbox that forbids iframes (Canva), videos then open the full app in a real
+  // window at this address, where the normal on-site player works. Leave '' to use the plain YouTube pop-out.
+  home: '',
   invidious: [],
   piped: [], // OPTIONAL extra Piped API addresses, e.g. 'https://pipedapi.example.org'
   k: ['AIzaSyB1lLPm', 'SPnd-RZY37Win', 'LL-fBkOJXYXqnY'],
@@ -644,7 +648,10 @@ const fallbackHtml = (vid, why, detail) => `<div class="player__fallback">
 // A new top-level window is a real page: it does not inherit the opener's CSP and has a real address.
 // Same window name every time, so the next video reuses the same pop-out.
 function popPlayer(vid) {
-  const url = `https://www.youtube.com/embed/${encodeURIComponent(vid)}?autoplay=1&rel=0`;
+  const home = ((window.PT_CONFIG || {}).home || '').replace(/#.*$/, '');
+  const url = home
+    ? `${home}#/watch?v=${encodeURIComponent(vid)}`
+    : `https://www.youtube.com/embed/${encodeURIComponent(vid)}?autoplay=1&rel=0`;
   const w = window.open(url, 'ptplayer', 'popup,width=1100,height=650');
   if (!w) toast('Popup blocked. Allow popups for this page and try again.');
   else { try { w.focus(); } catch (e) {} }

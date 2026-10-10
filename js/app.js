@@ -104,7 +104,10 @@ const fallbackHtml = (vid, why, detail) => `<div class="player__fallback">
 // A new top-level window is a real page: it does not inherit the opener's CSP and has a real address.
 // Same window name every time, so the next video reuses the same pop-out.
 function popPlayer(vid) {
-  const url = `https://www.youtube.com/embed/${encodeURIComponent(vid)}?autoplay=1&rel=0`;
+  const home = ((window.PT_CONFIG || {}).home || '').replace(/#.*$/, '');
+  const url = home
+    ? `${home}#/watch?v=${encodeURIComponent(vid)}`
+    : `https://www.youtube.com/embed/${encodeURIComponent(vid)}?autoplay=1&rel=0`;
   const w = window.open(url, 'ptplayer', 'popup,width=1100,height=650');
   if (!w) toast('Popup blocked. Allow popups for this page and try again.');
   else { try { w.focus(); } catch (e) {} }
