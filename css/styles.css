@@ -208,3 +208,6 @@ body.sidebar-collapsed .main { margin-left: 0; }
 .player__help { margin-top: 10px; font-size: 13px; color: var(--muted); }
 .player__help button, .player__help a { color: #ff9db0; font-weight: 600; }
 .player__help button:hover, .player__help a:hover { text-decoration: underline; }
+
+.player__btns { display: flex; flex-wrap: wrap; gap: 10px; }
+.player__diag { max-width: 100%; margin-top: 4px; padding: 10px 12px; border-radius: 10px; background: rgba(0,0,0,.35); color: var(--muted); font: 11px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-all; user-select: text; }

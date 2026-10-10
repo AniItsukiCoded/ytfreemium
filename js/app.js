@@ -91,11 +91,21 @@ const embedUrl = (vid, mode) => {
 };
 const watchUrl = (vid) => 'https://www.youtube.com/watch?v=' + encodeURIComponent(vid);
 
-const fallbackHtml = (vid, why) => `<div class="player__fallback">
+const fallbackHtml = (vid, why, detail) => `<div class="player__fallback">
   <h2>Can't play here</h2>
   <p>${why}</p>
-  <a class="btn btn--primary" href="${watchUrl(vid)}" target="_blank" rel="noopener">Watch on YouTube</a>
+  <div class="player__btns">
+    <a class="btn btn--primary" href="${watchUrl(vid)}" target="_blank" rel="noopener">Watch on YouTube</a>
+    <button class="btn" id="popPlayer">Open player in a window</button>
+  </div>
+  ${detail ? `<pre class="player__diag">${esc(detail)}</pre>` : ''}
 </div>`;
+
+// A new top-level window is a real page: it does not inherit the opener's CSP and has a real address.
+function popPlayer(vid) {
+  const url = RELAY ? embedUrl(vid, MODES.indexOf('relay')) : `https://www.youtube.com/embed/${encodeURIComponent(vid)}?autoplay=1&rel=0`;
+  if (!window.open(url, '_blank', 'popup,width=1100,height=650')) toast('Popup blocked. Allow popups and try again.');
+}
 
 function playerHtml(vid, title) {
   if (location.protocol === 'file:' && !RELAY) return fallbackHtml(vid, 'YouTube blocks embedded players on pages opened from a file.');
@@ -112,13 +122,17 @@ function startPlayer(vid) {
   const box = document.querySelector('.player');
   const f = box && box.querySelector('iframe');
   if (!f) return;
-  let tries = 0, timer = 0, done = false;
+  let tries = 0, timer = 0, done = false, lastCsp = '';
   const arm = () => { clearTimeout(timer); if (MODES[playerMode] === 'relay') timer = setTimeout(() => next(), 7000); };
   function next(manual) {
     if (done) return;
     if (!manual && tries >= MODES.length - 1) {
       done = true;
-      box.innerHTML = fallbackHtml(vid, 'This device or network blocks YouTube embeds, so the player can\'t load inside this page.');
+      box.innerHTML = fallbackHtml(vid, lastCsp
+        ? 'The page this app is running inside has a security policy (CSP) that blocks YouTube frames.'
+        : 'YouTube embeds are blocked or rejected here, so the player can\'t load inside this page.', lastCsp);
+      const pb = box.querySelector('#popPlayer');
+      if (pb) pb.onclick = () => popPlayer(vid);
       return;
     }
     tries++;
@@ -136,6 +150,9 @@ function startPlayer(vid) {
     else if (d.pt === 'err' || d.event === 'onError') next();
   };
   const onCsp = (e) => {
+    if (/youtube|github/.test(e.blockedURI || '')) {
+      lastCsp = 'blocked: ' + (e.blockedURI || '').slice(0, 60) + '\nrule: ' + e.violatedDirective + '\npolicy: ' + String(e.originalPolicy || '').slice(0, 400);
+    }
     if (/frame|child/.test(e.violatedDirective || '') && /youtube|github/.test(e.blockedURI || '')) next();
   };
   const onLoad = () => { try { f.contentWindow.postMessage('{"event":"listening","id":1}', '*'); } catch (_) {} };
