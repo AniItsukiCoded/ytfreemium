@@ -102,12 +102,39 @@ const fallbackHtml = (vid, why, detail) => `<div class="player__fallback">
 </div>`;
 
 // A new top-level window is a real page: it does not inherit the opener's CSP and has a real address.
+// Same window name every time, so the next video reuses the same pop-out.
 function popPlayer(vid) {
-  const url = RELAY ? embedUrl(vid, MODES.indexOf('relay')) : `https://www.youtube.com/embed/${encodeURIComponent(vid)}?autoplay=1&rel=0`;
-  if (!window.open(url, '_blank', 'popup,width=1100,height=650')) toast('Popup blocked. Allow popups and try again.');
+  const url = `https://www.youtube.com/embed/${encodeURIComponent(vid)}?autoplay=1&rel=0`;
+  const w = window.open(url, 'ptplayer', 'popup,width=1100,height=650');
+  if (!w) toast('Popup blocked. Allow popups for this page and try again.');
+  else { try { w.focus(); } catch (e) {} }
 }
 
+// Some hosts (Canva's code sandbox: frame-src 'none') forbid every iframe. We detect that once at startup.
+let framesBlocked = false;
+(function probeFrames() {
+  try {
+    const h = (e) => { if (/frame|child/.test(e.violatedDirective || '')) framesBlocked = true; };
+    document.addEventListener('securitypolicyviolation', h);
+    const f = document.createElement('iframe');
+    f.style.cssText = 'position:absolute;width:0;height:0;border:0;visibility:hidden';
+    f.src = 'https://www.youtube-nocookie.com/robots.txt';
+    document.body.appendChild(f);
+    setTimeout(() => { document.removeEventListener('securitypolicyviolation', h); f.remove(); }, 4000);
+  } catch (e) {}
+})();
+
+const popoutHtml = (vid) => `<div class="player__fallback">
+  <h2>Opens in a pop-out player</h2>
+  <p>This page blocks embedded players, so videos play in a small separate window. Clicking any video opens it there automatically.</p>
+  <div class="player__btns">
+    <button class="btn btn--primary" id="popPlayer">Open player window</button>
+    <button class="btn" id="streamBtn">Try in-page stream (beta)</button>
+  </div>
+</div>`;
+
 function playerHtml(vid, title) {
+  if (framesBlocked) return popoutHtml(vid);
   if (location.protocol === 'file:' && !RELAY) return fallbackHtml(vid, 'YouTube blocks embedded players on pages opened from a file.');
   return `<iframe src="${embedUrl(vid, playerMode)}" referrerpolicy="strict-origin-when-cross-origin"
     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen title="${esc(title)}"></iframe>`;
@@ -126,48 +153,90 @@ const fetchT = (url, ms) => {
   const c = new AbortController(); const t = setTimeout(() => c.abort(), ms);
   return fetch(url, { signal: c.signal }).finally(() => clearTimeout(t));
 };
-let instCache = null;
-async function instances() {
-  if (instCache) return instCache;
-  const own = (window.PT_CONFIG && window.PT_CONFIG.invidious) || [];
-  let found = [];
-  try {
-    const r = await fetchT('https://api.invidious.io/instances.json?sort_by=health', 6000);
-    const j = await r.json();
-    found = j.filter((x) => x[1] && x[1].api === true && x[1].type === 'https' && x[1].cors !== false).map((x) => x[1].uri);
-  } catch (e) {}
-  instCache = [...new Set(own.concat(found).map((u) => u.replace(/\/+$/, '')))];
-  return instCache;
+// Built-in guesses (public servers die often; the live lists below are tried too, and js/config.js can add more).
+const IV_DEFAULT = ['https://yewtu.be', 'https://inv.nadeko.net', 'https://invidious.nerdvpn.de', 'https://invidious.privacyredirect.com', 'https://iv.melmac.space', 'https://invidious.jing.rocks', 'https://inv.tux.pizza', 'https://yt.artemislena.eu'];
+const PIPED_DEFAULT = ['https://pipedapi.kavin.rocks', 'https://pipedapi.adminforge.de', 'https://api.piped.private.coffee', 'https://pipedapi.leptons.xyz', 'https://pipedapi.nosebs.ru', 'https://piped-api.privacy.com.de'];
+let srcCache = null, srcLog = [];
+const trimU = (u) => String(u || '').replace(/\/+$/, '');
+async function sources() {
+  if (srcCache) return srcCache;
+  const cfg = window.PT_CONFIG || {};
+  let iv = [], pp = [];
+  await Promise.all([
+    fetchT('https://api.invidious.io/instances.json?sort_by=health', 6000).then((r) => r.json()).then((j) => {
+      iv = j.filter((x) => x[1] && x[1].api === true && x[1].type === 'https' && x[1].cors !== false).map((x) => x[1].uri);
+    }).catch((e) => srcLog.push('invidious list: ' + (e.message || e))),
+    fetchT('https://piped-instances.kavin.rocks/', 6000).then((r) => r.json()).then((j) => {
+      pp = j.filter((x) => x.api_url).map((x) => x.api_url);
+    }).catch((e) => srcLog.push('piped list: ' + (e.message || e))),
+  ]);
+  const uniq = (l) => [...new Set(l.map(trimU))];
+  srcCache = {
+    iv: uniq((cfg.invidious || []).concat(iv, IV_DEFAULT)).slice(0, 8),
+    pp: uniq((cfg.piped || []).concat(pp, PIPED_DEFAULT)).slice(0, 8),
+  };
+  return srcCache;
 }
 const badStreams = new Set();
 let curBase = '';
 async function streamUrl(vid) {
-  const list = (await instances()).filter((b) => !badStreams.has(b)).slice(0, 10);
-  if (!list.length) throw new Error('no stream servers reachable');
-  const one = async (base) => {
+  const { iv, pp } = await sources();
+  const note = (base, why) => srcLog.push(base.replace(/^https?:\/\//, '') + ': ' + why);
+  const fromIv = async (base) => {
     const r = await fetchT(`${base}/api/v1/videos/${encodeURIComponent(vid)}?local=true&fields=formatStreams`, 9000);
     if (!r.ok) throw new Error('http ' + r.status);
     const j = await r.json();
     const f = (j.formatStreams || []).filter((x) => x.url && /mp4/.test(x.type || ''))
       .sort((a, b) => parseInt(b.resolution || 0) - parseInt(a.resolution || 0))[0];
-    if (!f) throw new Error('no mp4');
-    return { base, url: f.url.startsWith('/') ? base + f.url : f.url, q: f.resolution || '' };
+    if (!f) throw new Error('no playable format');
+    return { base, kind: 'mp4', url: f.url.startsWith('/') ? base + f.url : f.url, q: f.resolution || '' };
   };
-  return Promise.any(list.map(one));
+  const fromPiped = async (base) => {
+    const r = await fetchT(`${base}/streams/${encodeURIComponent(vid)}`, 9000);
+    if (!r.ok) throw new Error('http ' + r.status);
+    const j = await r.json();
+    const f = (j.videoStreams || []).filter((x) => !x.videoOnly && x.url)
+      .sort((a, b) => (b.height || 0) - (a.height || 0))[0];
+    if (f) return { base, kind: 'mp4', url: f.url, q: f.quality || '' };
+    if (j.hls) return { base, kind: 'hls', url: j.hls, q: 'HLS' };
+    throw new Error('no playable format');
+  };
+  const tasks = [];
+  iv.filter((b) => !badStreams.has(b)).forEach((b) => tasks.push(fromIv(b).catch((e) => { note(b, e.name === 'AbortError' ? 'timeout' : (e.message || 'failed')); throw e; })));
+  pp.filter((b) => !badStreams.has(b)).forEach((b) => tasks.push(fromPiped(b).catch((e) => { note(b, e.name === 'AbortError' ? 'timeout' : (e.message || 'failed')); throw e; })));
+  if (!tasks.length) throw new Error('no servers');
+  return Promise.any(tasks);
 }
+let hlsLoad = null;
+const loadHls = () => hlsLoad || (hlsLoad = new Promise((res, rej) => {
+  if (window.Hls) return res(window.Hls);
+  const sc = document.createElement('script');
+  sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js';
+  sc.onload = () => res(window.Hls); sc.onerror = () => rej(new Error('hls.js blocked'));
+  document.head.appendChild(sc);
+}));
 async function streamPlay(box, vid, detail) {
+  srcLog = [];
   box.innerHTML = '<div class="player__fallback"><h2>Loading video…</h2><p>This page blocks YouTube\'s player, so PremiumTube is fetching a direct stream instead.</p></div>';
+  const fail = (why) => box.isConnected && showFallback(box, vid, why, [srcLog.slice(0, 16).join('\n'), String(detail || '').split('\n').slice(0, 2).join('\n')].filter(Boolean).join('\n\n'));
   try {
-    const { base, url, q } = await streamUrl(vid);
+    const { base, kind, url, q } = await streamUrl(vid);
     if (!box.isConnected) return;
     box.innerHTML = '<video controls autoplay playsinline></video>';
     const v = box.querySelector('video');
-    v.onerror = () => { badStreams.add(base); showFallback(box, vid, 'The stream server failed to deliver this video. Try again, or open it on YouTube.', detail); };
     curBase = base;
-    v.src = url;
+    v.onerror = () => { badStreams.add(base); srcLog.push(base + ': video failed to load'); fail('The stream server failed to deliver this video. Try again, or open it on YouTube.'); };
+    if (kind === 'hls') {
+      const Hls = await loadHls();
+      if (Hls && Hls.isSupported()) {
+        const h = new Hls({ enableWorker: false });
+        h.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) { badStreams.add(base); srcLog.push(base + ': hls ' + d.details); fail('The stream server failed to deliver this video. Try again, or open it on YouTube.'); } });
+        h.loadSource(url); h.attachMedia(v);
+      } else v.src = url; // Safari/iOS play HLS natively
+    } else v.src = url;
     toast('Playing ' + (q || 'stream') + ' via ' + base.replace(/^https?:\/\//, ''));
   } catch (e) {
-    if (box.isConnected) showFallback(box, vid, 'YouTube\'s player is blocked here and no stream server answered.', detail);
+    fail('YouTube\'s player is blocked here and no stream server answered.');
   }
 }
 
@@ -178,7 +247,11 @@ function stopPlayer() { if (player) { player.stop(); player = null; } }
 function startPlayer(vid) {
   stopPlayer();
   const box = document.querySelector('.player');
-  const f = box && box.querySelector('iframe');
+  if (!box) return;
+  const pb0 = box.querySelector('#popPlayer'), sb0 = box.querySelector('#streamBtn');
+  if (pb0) pb0.onclick = () => popPlayer(vid);
+  if (sb0) sb0.onclick = () => streamPlay(box, vid, '');
+  const f = box.querySelector('iframe');
   if (!f) return;
   let tries = 0, timer = 0, done = false, lastCsp = '';
   const arm = () => { clearTimeout(timer); if (MODES[playerMode] === 'relay') timer = setTimeout(() => next(), 7000); };
@@ -209,8 +282,10 @@ function startPlayer(vid) {
       lastCsp = 'blocked: ' + (e.blockedURI || '').slice(0, 60) + '\nrule: ' + e.violatedDirective + '\npolicy: ' + String(e.originalPolicy || '').slice(0, 400);
     }
     if (/frame|child/.test(e.violatedDirective || '') && /youtube|github/.test(e.blockedURI || '') && !done) {
-      done = true; clearTimeout(timer); // no iframe can load in this page, so don't keep trying them
-      streamPlay(box, vid, lastCsp);
+      done = true; framesBlocked = true; clearTimeout(timer); // no iframe can load in this page
+      box.innerHTML = popoutHtml(vid);
+      box.querySelector('#popPlayer').onclick = () => popPlayer(vid);
+      box.querySelector('#streamBtn').onclick = () => streamPlay(box, vid, lastCsp);
     }
   };
   const onLoad = () => { try { f.contentWindow.postMessage('{"event":"listening","id":1}', '*'); } catch (_) {} };
@@ -320,6 +395,7 @@ async function watchPage(id, params) {
     // interactions
     document.getElementById('altPlayer').onclick = () => {
       if (!player) return toast('Use “Open on YouTube”');
+      if (framesBlocked) return popPlayer(vid);
       if (player.finished()) player.restream(); else player.next(true);
     };
     startPlayer(vid);
@@ -433,6 +509,10 @@ view.addEventListener('click', (e) => {
 document.addEventListener('click', (e) => {
   if (e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey) return;
   const a = e.target.closest('a[href^="#/"]');
+  if (a && framesBlocked) {
+    const m = (a.getAttribute('href') || '').match(/^#\/watch\?(?:.*&)?v=([\w-]{6,20})/);
+    if (m) popPlayer(m[1]);
+  }
   if (a) { e.preventDefault(); go(a.getAttribute('href')); }
 });
 // browser Back/Forward

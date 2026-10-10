@@ -642,12 +642,39 @@ const fallbackHtml = (vid, why, detail) => `<div class="player__fallback">
 </div>`;
 
 // A new top-level window is a real page: it does not inherit the opener's CSP and has a real address.
+// Same window name every time, so the next video reuses the same pop-out.
 function popPlayer(vid) {
-  const url = RELAY ? embedUrl(vid, MODES.indexOf('relay')) : `https://www.youtube.com/embed/${encodeURIComponent(vid)}?autoplay=1&rel=0`;
-  if (!window.open(url, '_blank', 'popup,width=1100,height=650')) toast('Popup blocked. Allow popups and try again.');
+  const url = `https://www.youtube.com/embed/${encodeURIComponent(vid)}?autoplay=1&rel=0`;
+  const w = window.open(url, 'ptplayer', 'popup,width=1100,height=650');
+  if (!w) toast('Popup blocked. Allow popups for this page and try again.');
+  else { try { w.focus(); } catch (e) {} }
 }
 
+// Some hosts (Canva's code sandbox: frame-src 'none') forbid every iframe. We detect that once at startup.
+let framesBlocked = false;
+(function probeFrames() {
+  try {
+    const h = (e) => { if (/frame|child/.test(e.violatedDirective || '')) framesBlocked = true; };
+    document.addEventListener('securitypolicyviolation', h);
+    const f = document.createElement('iframe');
+    f.style.cssText = 'position:absolute;width:0;height:0;border:0;visibility:hidden';
+    f.src = 'https://www.youtube-nocookie.com/robots.txt';
+    document.body.appendChild(f);
+    setTimeout(() => { document.removeEventListener('securitypolicyviolation', h); f.remove(); }, 4000);
+  } catch (e) {}
+})();
+
+const popoutHtml = (vid) => `<div class="player__fallback">
+  <h2>Opens in a pop-out player</h2>
+  <p>This page blocks embedded players, so videos play in a small separate window. Clicking any video opens it there automatically.</p>
+  <div class="player__btns">
+    <button class="btn btn--primary" id="popPlayer">Open player window</button>
+    <button class="btn" id="streamBtn">Try in-page stream (beta)</button>
+  </div>
+</div>`;
+
 function playerHtml(vid, title) {
+  if (framesBlocked) return popoutHtml(vid);
   if (location.protocol === 'file:' && !RELAY) return fallbackHtml(vid, 'YouTube blocks embedded players on pages opened from a file.');
   return `<iframe src="${embedUrl(vid, playerMode)}" referrerpolicy="strict-origin-when-cross-origin"
     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen title="${esc(title)}"></iframe>`;
@@ -760,7 +787,11 @@ function stopPlayer() { if (player) { player.stop(); player = null; } }
 function startPlayer(vid) {
   stopPlayer();
   const box = document.querySelector('.player');
-  const f = box && box.querySelector('iframe');
+  if (!box) return;
+  const pb0 = box.querySelector('#popPlayer'), sb0 = box.querySelector('#streamBtn');
+  if (pb0) pb0.onclick = () => popPlayer(vid);
+  if (sb0) sb0.onclick = () => streamPlay(box, vid, '');
+  const f = box.querySelector('iframe');
   if (!f) return;
   let tries = 0, timer = 0, done = false, lastCsp = '';
   const arm = () => { clearTimeout(timer); if (MODES[playerMode] === 'relay') timer = setTimeout(() => next(), 7000); };
@@ -791,8 +822,10 @@ function startPlayer(vid) {
       lastCsp = 'blocked: ' + (e.blockedURI || '').slice(0, 60) + '\nrule: ' + e.violatedDirective + '\npolicy: ' + String(e.originalPolicy || '').slice(0, 400);
     }
     if (/frame|child/.test(e.violatedDirective || '') && /youtube|github/.test(e.blockedURI || '') && !done) {
-      done = true; clearTimeout(timer); // no iframe can load in this page, so don't keep trying them
-      streamPlay(box, vid, lastCsp);
+      done = true; framesBlocked = true; clearTimeout(timer); // no iframe can load in this page
+      box.innerHTML = popoutHtml(vid);
+      box.querySelector('#popPlayer').onclick = () => popPlayer(vid);
+      box.querySelector('#streamBtn').onclick = () => streamPlay(box, vid, lastCsp);
     }
   };
   const onLoad = () => { try { f.contentWindow.postMessage('{"event":"listening","id":1}', '*'); } catch (_) {} };
@@ -902,6 +935,7 @@ async function watchPage(id, params) {
     // interactions
     document.getElementById('altPlayer').onclick = () => {
       if (!player) return toast('Use “Open on YouTube”');
+      if (framesBlocked) return popPlayer(vid);
       if (player.finished()) player.restream(); else player.next(true);
     };
     startPlayer(vid);
@@ -1015,6 +1049,10 @@ view.addEventListener('click', (e) => {
 document.addEventListener('click', (e) => {
   if (e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey) return;
   const a = e.target.closest('a[href^="#/"]');
+  if (a && framesBlocked) {
+    const m = (a.getAttribute('href') || '').match(/^#\/watch\?(?:.*&)?v=([\w-]{6,20})/);
+    if (m) popPlayer(m[1]);
+  }
   if (a) { e.preventDefault(); go(a.getAttribute('href')); }
 });
 // browser Back/Forward

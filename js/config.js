@@ -9,5 +9,6 @@ window.PT_CONFIG = {
   relay: '',
   // OPTIONAL extra Invidious servers to try first for stream mode (used when a page forbids iframes).
   invidious: [],
+  piped: [], // OPTIONAL extra Piped API addresses, e.g. 'https://pipedapi.example.org'
   k: ['AIzaSyB1lLPm', 'SPnd-RZY37Win', 'LL-fBkOJXYXqnY'],
 };
