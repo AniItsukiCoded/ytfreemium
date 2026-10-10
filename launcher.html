@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Launcher</title>
+  <title>PremiumTube Launcher</title>
   <style>
     body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0b0b0f; color: #f4f4f8; font: 16px system-ui, sans-serif; }
-    button { padding: 14px 28px; border: 0; border-radius: 999px; font: 700 16px inherit; color: #fff; cursor: pointer; background: linear-gradient(90deg,#ff2d55,#ff7a45); box-shadow: 0 10px 30px rgba(255,45,85,.4); }
-    p { color: #9a9aab; font-size: 13px; text-align: center; max-width: 360px; }
+    button { padding: 14px 28px; border: 0; border-radius: 999px; font: 700 16px system-ui, sans-serif; color: #fff; cursor: pointer; background: linear-gradient(90deg,#ff2d55,#ff7a45); box-shadow: 0 10px 30px rgba(255,45,85,.4); }
+    p { color: #9a9aab; font-size: 13px; text-align: center; max-width: 380px; min-height: 1.4em; }
   </style>
 </head>
 <body>
@@ -16,24 +16,69 @@
     <p id="msg">Opens in an about:blank tab.</p>
   </div>
   <script>
-    // EDIT THIS: raw link to premiumtube.html in your repo
-    // (GitHub → premiumtube.html → "Raw" button → copy the URL)
-    var RAW = 'https://raw.githubusercontent.com/YOUR-USERNAME/YOUR-REPO/main/premiumtube.html';
+(function () {
+  // Raw link to index.html in your repo. Everything else is found relative to it.
+  var RAW_INDEX = 'https://raw.githubusercontent.com/AniItsukiCoded/ytfreemium/refs/heads/main/index.html';
 
+  var base = RAW_INDEX.replace(/index\.html(\?.*)?$/, '');
+  var stamp = Date.now(); // dodge raw.githubusercontent's cache
+
+  function get(url) {
+    return fetch(url + '?t=' + stamp).then(function (r) {
+      if (!r.ok) throw new Error(url.replace(base, '') + ' returned HTTP ' + r.status);
+      return r.text();
+    });
+  }
+
+  // Raw files are served as text/plain, so <script src=raw> would never run. Fetch + inline instead.
+  function assemble() {
+    return get(base + 'index.html').then(function (html) {
+      var jobs = [];
+      html.replace(/<link\b[^>]*rel="stylesheet"[^>]*href="((?:css)\/[^"]+)"[^>]*>/g, function (tag, path) {
+        jobs.push(get(base + path).then(function (css) { return [tag, '<style>\n' + css + '\n</sty' + 'le>']; }));
+      });
+      html.replace(/<script\b[^>]*src="((?:js)\/[^"]+)"[^>]*><\/script>/g, function (tag, path) {
+        jobs.push(get(base + path).then(function (js) {
+          return [tag, '<scr' + 'ipt>\n' + js.replace(/<\/script/gi, '<\\/script') + '\n</scr' + 'ipt>'];
+        }));
+      });
+      return Promise.all(jobs).then(function (pairs) {
+        pairs.forEach(function (p) { html = html.split(p[0]).join(p[1]); });
+        return html;
+      });
+    });
+  }
+
+  // If the multi-file load fails for any reason, fall back to the one-file bundle.
+  function load() {
+    return assemble().catch(function (e) {
+      console.warn('Multi-file load failed, trying premiumtube.html:', e);
+      return get(base + 'premiumtube.html');
+    });
+  }
+
+  window.launchPremiumTube = function (status) {
+    var say = status || function () {};
+    var w = window.open('about:blank', '_blank');
+    if (!w) { say('Popup blocked. Allow popups for this page and try again.'); return; }
+    w.document.title = 'PremiumTube';
+    say('Loading files from GitHub…');
+    load().then(function (html) {
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
+      say('Opened.');
+    }).catch(function (e) {
+      w.close();
+      say('Could not load: ' + e.message);
+    });
+  };
+})();
+  </script>
+  <script>
     document.getElementById('go').onclick = function () {
       var msg = document.getElementById('msg');
-      var w = window.open('about:blank', '_blank');
-      if (!w) { msg.textContent = 'Popup blocked. Allow popups for this page and try again.'; return; }
-      msg.textContent = 'Loading…';
-      fetch(RAW + (RAW.indexOf('?') < 0 ? '?t=' + Date.now() : ''))
-        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
-        .then(function (html) {
-          w.document.open();
-          w.document.write(html);
-          w.document.close();
-          msg.textContent = 'Opened.';
-        })
-        .catch(function (e) { w.close(); msg.textContent = 'Could not load: ' + e.message + '. Check the RAW link.'; });
+      window.launchPremiumTube(function (t) { msg.textContent = t; });
     };
   </script>
 </body>
