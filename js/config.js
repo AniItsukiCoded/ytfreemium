@@ -7,5 +7,7 @@ window.PT_CONFIG = {
 // 'https://your-main-site.example/player.html'. Leave '' to skip the relay step; the player then
 // just tries the two direct embeds and finally shows a "Watch on YouTube" button.
   relay: '',
+  // OPTIONAL extra Invidious servers to try first for stream mode (used when a page forbids iframes).
+  invidious: [],
   k: ['AIzaSyB1lLPm', 'SPnd-RZY37Win', 'LL-fBkOJXYXqnY'],
 };

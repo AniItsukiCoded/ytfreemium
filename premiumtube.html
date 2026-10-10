@@ -224,6 +224,7 @@ body.sidebar-collapsed .main { margin-left: 0; }
 
 .player__btns { display: flex; flex-wrap: wrap; gap: 10px; }
 .player__diag { max-width: 100%; margin-top: 4px; padding: 10px 12px; border-radius: 10px; background: rgba(0,0,0,.35); color: var(--muted); font: 11px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-all; user-select: text; }
+.player video { position: absolute; inset: 0; width: 100%; height: 100%; background: #000; }
 
 </style>
 </head>
@@ -284,6 +285,8 @@ window.PT_CONFIG = {
 // 'https://your-main-site.example/player.html'. Leave '' to skip the relay step; the player then
 // just tries the two direct embeds and finally shows a "Watch on YouTube" button.
   relay: '',
+  // OPTIONAL extra Invidious servers to try first for stream mode (used when a page forbids iframes).
+  invidious: [],
   k: ['AIzaSyB1lLPm', 'SPnd-RZY37Win', 'LL-fBkOJXYXqnY'],
 };
 
@@ -649,6 +652,64 @@ function playerHtml(vid, title) {
     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen title="${esc(title)}"></iframe>`;
 }
 
+function showFallback(box, vid, why, detail) {
+  box.innerHTML = fallbackHtml(vid, why, detail);
+  const pb = box.querySelector('#popPlayer');
+  if (pb) pb.onclick = () => popPlayer(vid);
+}
+
+// Stream mode. Some hosts (e.g. Canva's code sandbox: frame-src 'none') forbid ALL iframes, so no YouTube
+// embed can ever load. Plain <video> is a different permission (media-src), so we ask public Invidious
+// servers for a direct, proxied MP4 and play it ourselves. Best effort: instances come and go.
+const fetchT = (url, ms) => {
+  const c = new AbortController(); const t = setTimeout(() => c.abort(), ms);
+  return fetch(url, { signal: c.signal }).finally(() => clearTimeout(t));
+};
+let instCache = null;
+async function instances() {
+  if (instCache) return instCache;
+  const own = (window.PT_CONFIG && window.PT_CONFIG.invidious) || [];
+  let found = [];
+  try {
+    const r = await fetchT('https://api.invidious.io/instances.json?sort_by=health', 6000);
+    const j = await r.json();
+    found = j.filter((x) => x[1] && x[1].api === true && x[1].type === 'https' && x[1].cors !== false).map((x) => x[1].uri);
+  } catch (e) {}
+  instCache = [...new Set(own.concat(found).map((u) => u.replace(/\/+$/, '')))];
+  return instCache;
+}
+const badStreams = new Set();
+let curBase = '';
+async function streamUrl(vid) {
+  const list = (await instances()).filter((b) => !badStreams.has(b)).slice(0, 10);
+  if (!list.length) throw new Error('no stream servers reachable');
+  const one = async (base) => {
+    const r = await fetchT(`${base}/api/v1/videos/${encodeURIComponent(vid)}?local=true&fields=formatStreams`, 9000);
+    if (!r.ok) throw new Error('http ' + r.status);
+    const j = await r.json();
+    const f = (j.formatStreams || []).filter((x) => x.url && /mp4/.test(x.type || ''))
+      .sort((a, b) => parseInt(b.resolution || 0) - parseInt(a.resolution || 0))[0];
+    if (!f) throw new Error('no mp4');
+    return { base, url: f.url.startsWith('/') ? base + f.url : f.url, q: f.resolution || '' };
+  };
+  return Promise.any(list.map(one));
+}
+async function streamPlay(box, vid, detail) {
+  box.innerHTML = '<div class="player__fallback"><h2>Loading video…</h2><p>This page blocks YouTube\'s player, so PremiumTube is fetching a direct stream instead.</p></div>';
+  try {
+    const { base, url, q } = await streamUrl(vid);
+    if (!box.isConnected) return;
+    box.innerHTML = '<video controls autoplay playsinline></video>';
+    const v = box.querySelector('video');
+    v.onerror = () => { badStreams.add(base); showFallback(box, vid, 'The stream server failed to deliver this video. Try again, or open it on YouTube.', detail); };
+    curBase = base;
+    v.src = url;
+    toast('Playing ' + (q || 'stream') + ' via ' + base.replace(/^https?:\/\//, ''));
+  } catch (e) {
+    if (box.isConnected) showFallback(box, vid, 'YouTube\'s player is blocked here and no stream server answered.', detail);
+  }
+}
+
 // Watches the player iframe and advances to the next mode on: a CSP block, a YouTube error
 // (153 etc., reported through the iframe API), or a relay that never says hello.
 let player = null;
@@ -664,13 +725,10 @@ function startPlayer(vid) {
     if (done) return;
     if (!manual && tries >= MODES.length - 1) {
       done = true;
-      box.innerHTML = fallbackHtml(vid, lastCsp
-        ? 'The page this app is running inside has a security policy (CSP) that blocks YouTube frames.'
-        : 'YouTube embeds are blocked or rejected here, so the player can\'t load inside this page.', lastCsp);
-      const pb = box.querySelector('#popPlayer');
-      if (pb) pb.onclick = () => popPlayer(vid);
+      streamPlay(box, vid, lastCsp);
       return;
     }
+    if (manual && tries >= MODES.length - 1) { done = true; badStreams.clear(); streamPlay(box, vid, lastCsp); return; }
     tries++;
     playerMode = (playerMode + 1) % MODES.length;
     f.src = embedUrl(vid, playerMode);
@@ -689,14 +747,17 @@ function startPlayer(vid) {
     if (/youtube|github/.test(e.blockedURI || '')) {
       lastCsp = 'blocked: ' + (e.blockedURI || '').slice(0, 60) + '\nrule: ' + e.violatedDirective + '\npolicy: ' + String(e.originalPolicy || '').slice(0, 400);
     }
-    if (/frame|child/.test(e.violatedDirective || '') && /youtube|github/.test(e.blockedURI || '')) next();
+    if (/frame|child/.test(e.violatedDirective || '') && /youtube|github/.test(e.blockedURI || '') && !done) {
+      done = true; clearTimeout(timer); // no iframe can load in this page, so don't keep trying them
+      streamPlay(box, vid, lastCsp);
+    }
   };
   const onLoad = () => { try { f.contentWindow.postMessage('{"event":"listening","id":1}', '*'); } catch (_) {} };
   window.addEventListener('message', onMsg);
   document.addEventListener('securitypolicyviolation', onCsp);
   f.addEventListener('load', onLoad);
   arm();
-  player = { next, stop() { done = true; clearTimeout(timer); window.removeEventListener('message', onMsg); document.removeEventListener('securitypolicyviolation', onCsp); } };
+  player = { next, finished: () => done, restream() { if (curBase) badStreams.add(curBase); done = true; streamPlay(box, vid, lastCsp); }, stop() { done = true; clearTimeout(timer); window.removeEventListener('message', onMsg); document.removeEventListener('securitypolicyviolation', onCsp); } };
 }
 
 // ---------- pages ----------
@@ -798,7 +859,7 @@ async function watchPage(id, params) {
     // interactions
     document.getElementById('altPlayer').onclick = () => {
       if (!player) return toast('Use “Open on YouTube”');
-      player.next(true);
+      if (player.finished()) player.restream(); else player.next(true);
     };
     startPlayer(vid);
     document.getElementById('descMore').onclick = (e) => {
