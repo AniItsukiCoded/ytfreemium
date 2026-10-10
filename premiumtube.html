@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-  <style>
+<style>
 :root {
   --bg: #0b0b0f;
   --bg-2: #13131a;
@@ -271,7 +271,7 @@ body.sidebar-collapsed .main { margin-left: 0; }
   <div class="toast" id="toast" role="status"></div>
   <div class="scrim" id="scrim"></div>
 
-  <script>
+<script>
 // YouTube Data API v3 key.
 // NOTE: on a static site the key is delivered to the browser, so it can never be fully secret.
 // It is split up here only to keep it out of casual scrapers. The real protection is to
@@ -281,7 +281,7 @@ window.PT_CONFIG = {
 };
 
 </script>
-  <script>
+<script>
 (function () {
 // Local storage backed Watch later + History
 const read = (k) => { try { return JSON.parse(localStorage.getItem(k)) || []; } catch { return []; } };
@@ -310,7 +310,7 @@ window.PT_STORE = store;
 })();
 
 </script>
-  <script>
+<script>
 (function () {
 const BASE = 'https://www.googleapis.com/youtube/v3/';
 const KEY = (window.PT_CONFIG && window.PT_CONFIG.k || []).join('');
@@ -427,7 +427,7 @@ window.PT_API = { trending, search, video, videosByIds, related, comments, chann
 })();
 
 </script>
-  <script>
+<script>
 (function () {
 // Pure HTML-string builders. Everything from the API is escaped before it reaches the DOM.
 const store = window.PT_STORE;
@@ -526,7 +526,7 @@ window.PT_UI = { esc, compact, duration, ago, card, skeletons, message };
 })();
 
 </script>
-  <script>
+<script>
 (function () {
 const api = window.PT_API;
 const store = window.PT_STORE;

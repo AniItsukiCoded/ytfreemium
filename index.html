@@ -10,7 +10,6 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-  <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
   <header class="topbar">
@@ -59,10 +58,44 @@
   <div class="toast" id="toast" role="status"></div>
   <div class="scrim" id="scrim"></div>
 
-  <script src="js/config.js"></script>
-  <script src="js/store.js"></script>
-  <script src="js/api.js"></script>
-  <script src="js/components.js"></script>
-  <script src="js/app.js"></script>
+  <script>
+  // Loads the app's CSS + JS straight from the raw GitHub files and inlines them, so this page works
+  // anywhere (about:blank, iframes, file://, any host). raw.githubusercontent.com serves text/plain,
+  // so <script src="raw..."> would never run: we fetch the text and inject it instead.
+  (function () {
+    var RAW = 'https://raw.githubusercontent.com/AniItsukiCoded/ytfreemium/refs/heads/main/';
+    var CSS = ['css/styles.css'];
+    var JS = ['js/config.js', 'js/store.js', 'js/api.js', 'js/components.js', 'js/app.js']; // order matters
+    var stamp = Date.now(); // dodge raw's cache
+
+    function get(base, path) {
+      return fetch(base + path + (base ? '?t=' + stamp : '')).then(function (r) {
+        if (!r.ok) throw new Error(path + ' returned HTTP ' + r.status);
+        return r.text();
+      });
+    }
+    function loadAll(base) {
+      return Promise.all(CSS.concat(JS).map(function (p) { return get(base, p); })).then(function (all) {
+        CSS.forEach(function (_, i) {
+          var st = document.createElement('style');
+          st.textContent = all[i];
+          document.head.appendChild(st);
+        });
+        JS.forEach(function (_, i) { // appended in order; inline scripts run synchronously
+          var sc = document.createElement('script');
+          sc.textContent = all[CSS.length + i];
+          document.body.appendChild(sc);
+        });
+      });
+    }
+    loadAll(RAW).catch(function (e) {
+      console.warn('GitHub raw load failed, trying files next to this page:', e);
+      return loadAll('');
+    }).catch(function (e) {
+      var v = document.getElementById('view');
+      if (v) v.textContent = 'Could not load PremiumTube: ' + e.message;
+    });
+  })();
+  </script>
 </body>
 </html>
